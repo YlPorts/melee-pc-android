@@ -70,10 +70,15 @@ public class MeleeActivity extends SDLActivity {
         mTouchOverlayHandler = new android.os.Handler(android.os.Looper.getMainLooper());
         scheduleTouchOverlay();
 
+        // Sustained-performance mode deliberately trades peak CPU/GPU clocks
+        // for a lower thermally sustainable ceiling. Melee needs peak
+        // single-thread and GPU throughput to hold its 60 Hz simulation, so
+        // leave that cap disabled and let Android's scheduler/governor boost
+        // dynamically instead.
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
             android.os.PowerManager pm = (android.os.PowerManager) getSystemService(android.content.Context.POWER_SERVICE);
             if (pm != null && pm.isSustainedPerformanceModeSupported()) {
-                getWindow().setSustainedPerformanceMode(true);
+                getWindow().setSustainedPerformanceMode(false);
             }
         }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
