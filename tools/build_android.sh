@@ -36,6 +36,11 @@ fi
 STRIP_TOOL="$(find "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt" -name llvm-strip -print -quit)"
 echo "=== NDK ${ANDROID_NDK_HOME} ==="
 
+# Keep Android-specific hot-path changes isolated from desktop builds while
+# still making them reproducible for local builds and CI.
+echo "=== Applying Android performance patches ==="
+python3 "${ROOT_DIR}/tools/android_perf_patch.py"
+
 echo "=== Building native library (arm64-v8a) ==="
 cmake -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
