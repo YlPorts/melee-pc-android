@@ -61,30 +61,36 @@ if [[ -f "${BUILD_DIR}/_deps/png-build/libpng16.so" ]]; then
     "${STRIP_TOOL}" --strip-unneeded -o "${ANDROID_DIR}/app/src/main/jniLibs/arm64-v8a/libpng16.so" "${BUILD_DIR}/_deps/png-build/libpng16.so"
 fi
 
-echo "=== Preparing release signing key ==="
+echo "=== Preparing APK signing ==="
 KEYSTORE="${ANDROID_DIR}/melee-release.keystore"
 if [[ -n "${MELEE_KEYSTORE_BASE64:-}" ]]; then
-    # CI path: the keystore lives in repository secrets, never in the tree.
+    # CI release path: the keystore lives in repository secrets, never in the tree.
     base64 -d <<< "${MELEE_KEYSTORE_BASE64}" > "${KEYSTORE}"
 elif [[ -f "${ANDROID_DIR}/release-signing.env" ]]; then
-    # Local path: passwords sit next to the (gitignored) keystore.
+    # Local release path: passwords sit next to the (gitignored) keystore.
     set -a; source "${ANDROID_DIR}/release-signing.env"; set +a
 fi
-if [[ ! -f "${KEYSTORE}" ]]; then
-    echo "error: no signing key; set MELEE_KEYSTORE_BASE64 or create ${KEYSTORE}" >&2
-    exit 1
-fi
-export MELEE_KEYSTORE_PASSWORD MELEE_KEY_ALIAS MELEE_KEY_PASSWORD
 
-echo "=== Building Melee Android APK ==="
+if [[ -f "${KEYSTORE}" ]]; then
+    export MELEE_KEYSTORE_PASSWORD MELEE_KEY_ALIAS MELEE_KEY_PASSWORD
+    GRADLE_TASK=":app:assembleRelease"
+    APK_INPUT="${ANDROID_DIR}/app/build/outputs/apk/release/app-release.apk"
+    echo "=== Building release-signed Melee Android APK ==="
+else
+    # Forks do not inherit Actions secrets. Keep CI useful by producing an
+    # installable debug-signed shell around the same Release native library.
+    GRADLE_TASK=":app:assembleDebug"
+    APK_INPUT="${ANDROID_DIR}/app/build/outputs/apk/debug/app-debug.apk"
+    echo "=== No release key found; building installable debug-signed APK ==="
+fi
+
 cd "${ANDROID_DIR}"
-./gradlew --no-daemon :app:assembleRelease
+./gradlew --no-daemon "${GRADLE_TASK}"
 
 APK="${ROOT_DIR}/dist/Melee-Android-arm64.apk"
 mkdir -p "${ROOT_DIR}/dist"
-cp "${ANDROID_DIR}/app/build/outputs/apk/release/app-release.apk" "${APK}"
+cp "${APK_INPUT}" "${APK}"
 
-# A release APK that silently came out unsigned would fail to install.
 APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -name apksigner -print -quit 2>/dev/null || true)"
 if [[ -n "${APKSIGNER}" ]]; then
     "${APKSIGNER}" verify --print-certs "${APK}" | head -4
