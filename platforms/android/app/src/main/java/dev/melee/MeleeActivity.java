@@ -4,6 +4,10 @@ import org.libsdl.app.SDLActivity;
 
 public class MeleeActivity extends SDLActivity {
 
+    private static final String ANDROID_TUNING_PREFS = "melee_android_tuning";
+    private static final String ANDROID_TUNING_VERSION_KEY = "version";
+    private static final int ANDROID_TUNING_VERSION = 2;
+
     @Override
     protected String[] getLibraries() {
         return new String[] {
@@ -26,6 +30,9 @@ public class MeleeActivity extends SDLActivity {
 
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
+        // Do this before SDL can start the native launcher so existing installs
+        // also pick up the Android-specific performance/readability defaults.
+        migrateAndroidTuning();
         super.onCreate(savedInstanceState);
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         applyImmersiveMode();
@@ -55,6 +62,72 @@ public class MeleeActivity extends SDLActivity {
                     android.Manifest.permission.WRITE_EXTERNAL_STORAGE
                 }, 100);
             }
+        }
+    }
+
+    private void migrateAndroidTuning() {
+        try {
+            android.content.SharedPreferences tuning = getSharedPreferences(
+                ANDROID_TUNING_PREFS, android.content.Context.MODE_PRIVATE);
+            if (tuning.getInt(ANDROID_TUNING_VERSION_KEY, 0) >= ANDROID_TUNING_VERSION) {
+                return;
+            }
+
+            // Make the on-screen controller easier to hit while preserving any
+            // larger custom scale the user already selected.
+            android.content.SharedPreferences touch = getSharedPreferences(
+                "melee_touch_controls", android.content.Context.MODE_PRIVATE);
+            float touchScale = touch.getFloat("scale", 1.0f);
+            if (!Float.isFinite(touchScale) || touchScale < 1.16f) {
+                touch.edit().putFloat("scale", 1.16f).apply();
+            }
+
+            // Preserve the selected disc and every other launcher setting, but
+            // move Android away from FIFO VSync (which can fall straight to
+            // half-rate) and make the phone UI readable by default.
+            java.io.File config = new java.io.File(getFilesDir(), "launcher.cfg");
+            if (config.isFile()) {
+                java.nio.file.Path path = config.toPath();
+                java.util.List<String> lines = java.nio.file.Files.readAllLines(
+                    path, java.nio.charset.StandardCharsets.UTF_8);
+                boolean sawVsync = false;
+                boolean sawScale = false;
+                for (int i = 0; i < lines.size(); i++) {
+                    String line = lines.get(i);
+                    String trimmed = line.trim();
+                    if (trimmed.startsWith("vsync ")) {
+                        lines.set(i, "vsync 0");
+                        sawVsync = true;
+                    } else if (trimmed.startsWith("scale ")) {
+                        float scale = 1.0f;
+                        try {
+                            scale = Float.parseFloat(trimmed.substring(6).trim());
+                        } catch (NumberFormatException ignored) {
+                        }
+                        if (!Float.isFinite(scale) || scale < 1.35f) {
+                            lines.set(i, "scale 1.35");
+                        }
+                        sawScale = true;
+                    }
+                }
+                if (!sawVsync) {
+                    lines.add("vsync 0");
+                }
+                if (!sawScale) {
+                    lines.add("scale 1.35");
+                }
+                java.nio.file.Files.write(
+                    path,
+                    lines,
+                    java.nio.charset.StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                    java.nio.file.StandardOpenOption.WRITE);
+            }
+
+            tuning.edit().putInt(ANDROID_TUNING_VERSION_KEY, ANDROID_TUNING_VERSION).apply();
+        } catch (Exception ignored) {
+            // Native defaults still cover clean installs; never block startup
+            // because an old preference file could not be migrated.
         }
     }
 
