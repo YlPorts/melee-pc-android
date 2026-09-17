@@ -42,6 +42,14 @@ void pc_touch_set_active(bool active) {
 
 bool pc_touch_get_status(PADStatus* out) {
     pthread_mutex_lock(&s_touch_lock);
+
+    /* pc_keyboard_apply() reaches this function only from the GameCube PAD
+     * polling path. The native launcher handles SDL input directly and never
+     * asks for a PADStatus, so this is the clean launcher -> game boundary we
+     * expose to the Android Activity. Mark it before checking touch-active so
+     * gameplay can be detected while the overlay is still intentionally off. */
+    s_gameplay_active = true;
+
     if (!s_touch_active) {
         pthread_mutex_unlock(&s_touch_lock);
         return false;
@@ -53,12 +61,6 @@ bool pc_touch_get_status(PADStatus* out) {
     return true;
 }
 
-static void pc_touch_mark_gameplay_active(void) {
-    pthread_mutex_lock(&s_touch_lock);
-    s_gameplay_active = true;
-    pthread_mutex_unlock(&s_touch_lock);
-}
-
 static bool pc_touch_is_gameplay_active(void) {
     pthread_mutex_lock(&s_touch_lock);
     bool active = s_gameplay_active;
@@ -67,12 +69,6 @@ static bool pc_touch_is_gameplay_active(void) {
 }
 
 void pc_touch_apply(void) {
-    /* The launcher does not poll GameCube PAD state. The first call here is a
-     * reliable boundary between the native launcher and the actual game, so
-     * Android can keep its full-screen touch View completely out of the way
-     * while the user is choosing a disc or changing launcher settings. */
-    pc_touch_mark_gameplay_active();
-
     PADStatus st = {0};
     if (pc_touch_get_status(&st)) {
         PADSetVirtualStatus(0, &st);
