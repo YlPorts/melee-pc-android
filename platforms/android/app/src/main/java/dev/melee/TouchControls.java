@@ -24,5 +24,9 @@ public final class TouchControls {
 
     public static native void nativeSetTouchActive(boolean active);
 
+    // False while the native launcher is on screen. It flips to true on the
+    // first GameCube PAD update, which only happens once Melee itself starts.
+    public static native boolean nativeIsGameplayActive();
+
     private TouchControls() {}
 }
