@@ -23,7 +23,7 @@ struct Preferences {
 #endif
     bool fullscreen = false;
 #if defined(__ANDROID__)
-    float scale = 1.35f;
+    float scale = 1.50f;
     float render_scale = 1.0f, volume = 1.0f;
     int msaa = 1, anisotropy = 1;
 #else
