@@ -12,6 +12,7 @@ static pthread_mutex_t s_touch_lock = PTHREAD_MUTEX_INITIALIZER;
 static PADStatus s_touch_status;
 static uint16_t s_latched_buttons;
 static bool s_touch_active;
+static bool s_gameplay_active;
 
 void pc_touch_set_pad(uint16_t buttons, int8_t stickX, int8_t stickY, int8_t cstickX,
     int8_t cstickY, uint8_t triggerL, uint8_t triggerR) {
@@ -52,7 +53,26 @@ bool pc_touch_get_status(PADStatus* out) {
     return true;
 }
 
+static void pc_touch_mark_gameplay_active(void) {
+    pthread_mutex_lock(&s_touch_lock);
+    s_gameplay_active = true;
+    pthread_mutex_unlock(&s_touch_lock);
+}
+
+static bool pc_touch_is_gameplay_active(void) {
+    pthread_mutex_lock(&s_touch_lock);
+    bool active = s_gameplay_active;
+    pthread_mutex_unlock(&s_touch_lock);
+    return active;
+}
+
 void pc_touch_apply(void) {
+    /* The launcher does not poll GameCube PAD state. The first call here is a
+     * reliable boundary between the native launcher and the actual game, so
+     * Android can keep its full-screen touch View completely out of the way
+     * while the user is choosing a disc or changing launcher settings. */
+    pc_touch_mark_gameplay_active();
+
     PADStatus st = {0};
     if (pc_touch_get_status(&st)) {
         PADSetVirtualStatus(0, &st);
@@ -73,6 +93,13 @@ Java_dev_melee_TouchControls_nativeSetTouchActive(JNIEnv* env, jclass clazz, jbo
     (void)env;
     (void)clazz;
     pc_touch_set_active(active == JNI_TRUE);
+}
+
+__attribute__((visibility("default"))) JNIEXPORT jboolean JNICALL
+Java_dev_melee_TouchControls_nativeIsGameplayActive(JNIEnv* env, jclass clazz) {
+    (void)env;
+    (void)clazz;
+    return pc_touch_is_gameplay_active() ? JNI_TRUE : JNI_FALSE;
 }
 
 #else
