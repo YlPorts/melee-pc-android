@@ -76,7 +76,7 @@ gcc_cmd = [
     '-fexec-charset=CP932',
     '-Wno-scalar-storage-order',
     '-march=armv8-a+crc+crypto',
-    '-mtune=cortex-a73',
+    '-mtune=cortex-a76',
 ] + filtered_args
 
 os.execv(gcc_bin, gcc_cmd)
