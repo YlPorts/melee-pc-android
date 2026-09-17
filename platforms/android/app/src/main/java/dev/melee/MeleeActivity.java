@@ -6,7 +6,7 @@ public class MeleeActivity extends SDLActivity {
 
     private static final String ANDROID_TUNING_PREFS = "melee_android_tuning";
     private static final String ANDROID_TUNING_VERSION_KEY = "version";
-    private static final int ANDROID_TUNING_VERSION = 2;
+    private static final int ANDROID_TUNING_VERSION = 3;
 
     @Override
     protected String[] getLibraries() {
@@ -27,6 +27,33 @@ public class MeleeActivity extends SDLActivity {
     }
 
     private TouchOverlayView mTouchOverlay;
+    private android.os.Handler mTouchOverlayHandler;
+
+    private final Runnable mTouchOverlayPoll = new Runnable() {
+        @Override
+        public void run() {
+            if (mTouchOverlayHandler == null || isFinishing() || isDestroyed()) {
+                return;
+            }
+
+            boolean gameplayActive = false;
+            try {
+                gameplayActive = TouchControls.nativeIsGameplayActive();
+            } catch (UnsatisfiedLinkError ignored) {
+                // SDL may still be loading the native library. Try again shortly.
+            }
+
+            if (gameplayActive) {
+                attachTouchOverlay();
+                return;
+            }
+
+            // Keep the Android View completely absent while the native launcher
+            // is visible, so Choose disc, Settings, sliders, etc. receive their
+            // touches directly instead of the floating stick stealing them.
+            mTouchOverlayHandler.postDelayed(this, 100);
+        }
+    };
 
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
@@ -37,13 +64,11 @@ public class MeleeActivity extends SDLActivity {
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         applyImmersiveMode();
 
-        mTouchOverlay = new TouchOverlayView(this);
-        if (mLayout != null) {
-            mLayout.addView(mTouchOverlay, new android.view.ViewGroup.LayoutParams(
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT
-            ));
-        }
+        // Do NOT attach the touch controller here. The launcher must remain a
+        // normal touch UI. We attach it only after native code starts polling
+        // GameCube PAD input, which means Melee itself is running.
+        mTouchOverlayHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        scheduleTouchOverlay();
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
             android.os.PowerManager pm = (android.os.PowerManager) getSystemService(android.content.Context.POWER_SERVICE);
@@ -65,69 +90,105 @@ public class MeleeActivity extends SDLActivity {
         }
     }
 
+    private void scheduleTouchOverlay() {
+        if (mTouchOverlay != null || mTouchOverlayHandler == null) {
+            return;
+        }
+        mTouchOverlayHandler.removeCallbacks(mTouchOverlayPoll);
+        mTouchOverlayHandler.post(mTouchOverlayPoll);
+    }
+
+    private void attachTouchOverlay() {
+        if (mTouchOverlay != null || mLayout == null) {
+            return;
+        }
+        mTouchOverlay = new TouchOverlayView(this);
+        mLayout.addView(mTouchOverlay, new android.view.ViewGroup.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        mTouchOverlay.updateControllerState();
+    }
+
     private void migrateAndroidTuning() {
         try {
             android.content.SharedPreferences tuning = getSharedPreferences(
                 ANDROID_TUNING_PREFS, android.content.Context.MODE_PRIVATE);
-            if (tuning.getInt(ANDROID_TUNING_VERSION_KEY, 0) >= ANDROID_TUNING_VERSION) {
+            int previousVersion = tuning.getInt(ANDROID_TUNING_VERSION_KEY, 0);
+            if (previousVersion >= ANDROID_TUNING_VERSION) {
                 return;
             }
 
-            // Make the on-screen controller easier to hit while preserving any
-            // larger custom scale the user already selected.
+            // v2 forced the touch scale to 1.16, which is much too large on
+            // high-density phones. Undo that injected value. Fresh installs
+            // start slightly smaller as well; later user changes are preserved.
             android.content.SharedPreferences touch = getSharedPreferences(
                 "melee_touch_controls", android.content.Context.MODE_PRIVATE);
+            boolean hadTouchScale = touch.contains("scale");
             float touchScale = touch.getFloat("scale", 1.0f);
-            if (!Float.isFinite(touchScale) || touchScale < 1.16f) {
-                touch.edit().putFloat("scale", 1.16f).apply();
+            boolean wasV2InjectedScale = previousVersion == 2
+                && touchScale >= 1.14f && touchScale <= 1.18f;
+            if (!hadTouchScale || !Float.isFinite(touchScale) || wasV2InjectedScale) {
+                touch.edit().putFloat("scale", 0.90f).apply();
             }
 
-            // Preserve the selected disc and every other launcher setting, but
-            // move Android away from FIFO VSync (which can fall straight to
-            // half-rate) and make the phone UI readable by default.
-            java.io.File config = new java.io.File(getFilesDir(), "launcher.cfg");
-            if (config.isFile()) {
-                java.nio.file.Path path = config.toPath();
-                java.util.List<String> lines = java.nio.file.Files.readAllLines(
-                    path, java.nio.charset.StandardCharsets.UTF_8);
-                boolean sawVsync = false;
-                boolean sawScale = false;
-                for (int i = 0; i < lines.size(); i++) {
-                    String line = lines.get(i);
-                    String trimmed = line.trim();
-                    if (trimmed.startsWith("vsync ")) {
-                        lines.set(i, "vsync 0");
-                        sawVsync = true;
-                    } else if (trimmed.startsWith("scale ")) {
-                        float scale = 1.0f;
-                        try {
-                            scale = Float.parseFloat(trimmed.substring(6).trim());
-                        } catch (NumberFormatException ignored) {
-                        }
-                        if (!Float.isFinite(scale) || scale < 1.35f) {
-                            lines.set(i, "scale 1.35");
-                        }
-                        sawScale = true;
-                    }
-                }
-                if (!sawVsync) {
-                    lines.add("vsync 0");
-                }
-                if (!sawScale) {
-                    lines.add("scale 1.35");
-                }
-                java.nio.file.Files.write(
-                    path,
-                    lines,
-                    java.nio.charset.StandardCharsets.UTF_8,
-                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
-                    java.nio.file.StandardOpenOption.WRITE);
-            }
+            // SDL_GetPrefPath can resolve to either the files root or an app
+            // subdirectory depending on the SDL Android glue version. Migrate
+            // both possible launcher.cfg locations without touching the disc
+            // path or any unrelated setting.
+            migrateLauncherConfig(new java.io.File(getFilesDir(), "launcher.cfg"));
+            migrateLauncherConfig(
+                new java.io.File(new java.io.File(getFilesDir(), "melee-pc"), "launcher.cfg"));
 
             tuning.edit().putInt(ANDROID_TUNING_VERSION_KEY, ANDROID_TUNING_VERSION).apply();
         } catch (Exception ignored) {
             // Native defaults still cover clean installs; never block startup
             // because an old preference file could not be migrated.
+        }
+    }
+
+    private void migrateLauncherConfig(java.io.File config) {
+        if (!config.isFile()) {
+            return;
+        }
+        try {
+            java.nio.file.Path path = config.toPath();
+            java.util.List<String> lines = java.nio.file.Files.readAllLines(
+                path, java.nio.charset.StandardCharsets.UTF_8);
+            boolean sawVsync = false;
+            boolean sawScale = false;
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i);
+                String trimmed = line.trim();
+                if (trimmed.startsWith("vsync ")) {
+                    lines.set(i, "vsync 0");
+                    sawVsync = true;
+                } else if (trimmed.startsWith("scale ")) {
+                    float scale = 1.0f;
+                    try {
+                        scale = Float.parseFloat(trimmed.substring(6).trim());
+                    } catch (NumberFormatException ignored) {
+                    }
+                    if (!Float.isFinite(scale) || scale < 1.50f) {
+                        lines.set(i, "scale 1.50");
+                    }
+                    sawScale = true;
+                }
+            }
+            if (!sawVsync) {
+                lines.add("vsync 0");
+            }
+            if (!sawScale) {
+                lines.add("scale 1.50");
+            }
+            java.nio.file.Files.write(
+                path,
+                lines,
+                java.nio.charset.StandardCharsets.UTF_8,
+                java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                java.nio.file.StandardOpenOption.WRITE);
+        } catch (Exception ignored) {
+            // Keep launch resilient if an old config is temporarily unreadable.
         }
     }
 
@@ -142,7 +203,21 @@ public class MeleeActivity extends SDLActivity {
         }
         if (mTouchOverlay != null) {
             mTouchOverlay.updateControllerState();
+        } else {
+            scheduleTouchOverlay();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (mTouchOverlayHandler != null) {
+            mTouchOverlayHandler.removeCallbacks(mTouchOverlayPoll);
+        }
+        try {
+            TouchControls.nativeSetTouchActive(false);
+        } catch (UnsatisfiedLinkError ignored) {
+        }
+        super.onDestroy();
     }
 
     @Override
