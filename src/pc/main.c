@@ -302,7 +302,10 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
          * then sits on a stale frame while the game runs on. */
         .vsync = !(getenv("MELEE_VSYNC") && getenv("MELEE_VSYNC")[0] == '0'),
 #if defined(__ANDROID__)
-        .logLevel = LOG_DEBUG,
+        /* Release Android builds should not spend frame time formatting and
+         * pushing Aurora DEBUG traffic through logcat. Keep INFO available for
+         * startup/backend diagnostics without enabling hot debug chatter. */
+        .logLevel = LOG_INFO,
 #else
         .logLevel = getenv("MELEE_DEBUG") ? LOG_DEBUG : LOG_INFO,
 #endif
@@ -340,6 +343,12 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
     pc_menu_init(info.window);
     pc_platform_init();
     aurora_card_set_present(card);
+#if defined(__ANDROID__)
+    /* The decompiled game simulation spends most of its time on this SDL
+     * thread. Give it the same high scheduling priority as Aurora's FIFO and
+     * render workers, but deliberately avoid affinity/pinning on big.LITTLE. */
+    SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_HIGH);
+#endif
     int rc = melee_main();
     pc_shutdown_once();
     return rc;
