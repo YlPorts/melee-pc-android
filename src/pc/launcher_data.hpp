@@ -16,13 +16,18 @@ struct Verification {
 };
 struct Preferences {
     std::string disc;
-    bool vsync = true;
-    bool fullscreen = false;
-    float scale = 1.0f;
 #if defined(__ANDROID__)
+    bool vsync = false;
+#else
+    bool vsync = true;
+#endif
+    bool fullscreen = false;
+#if defined(__ANDROID__)
+    float scale = 1.35f;
     float render_scale = 1.0f, volume = 1.0f;
     int msaa = 1, anisotropy = 1;
 #else
+    float scale = 1.0f;
     float render_scale = 0.0f, volume = 1.0f;
     int msaa = 1, anisotropy = 16;
 #endif
